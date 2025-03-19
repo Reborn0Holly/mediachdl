@@ -223,7 +223,7 @@ class MediaDownloaderApp:
         website_link.pack(side=tk.RIGHT)
         website_link.bind(
             "<Button-1>",
-            lambda e: webbrowser.open("https://github.com/"),
+            lambda e: webbrowser.open("https://github.com/Reborn0Holly/mediachdl/tree/main"),
         )
 
     def log(self, message):

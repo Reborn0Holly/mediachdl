@@ -13,6 +13,10 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
+import urllib3
+import warnings
+
+warnings.filterwarnings("ignore", category=urllib3.exceptions.InsecureRequestWarning)
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
@@ -30,7 +34,7 @@ USER_AGENTS = [
 class MediaDownloaderApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Загрузчик медиафайлов 2ch/Arhivach")
+        self.root.title("Загрузчик медиафайлов 2ch/arhivach")
         self.root.geometry("860x630")
         
         self.current_user_agent = None
@@ -64,7 +68,7 @@ class MediaDownloaderApp:
         url_frame.pack(fill=tk.X, pady=5)
 
         ttk.Label(
-            url_frame, text="Введите ссылку на тред 2ch.hk или arhivach.hk:"
+            url_frame, text="Введите ссылку на тред 2ch.org или arhivach.vc:"
         ).pack(anchor="w")
 
         url_entry_frame = ttk.Frame(url_frame)
@@ -223,7 +227,7 @@ class MediaDownloaderApp:
         website_link.pack(side=tk.RIGHT)
         website_link.bind(
             "<Button-1>",
-            lambda e: webbrowser.open("https://github.com/Reborn0Holly/mediachdl/tree/main"),
+            lambda e: webbrowser.open("https://github.com/Reborn0Holly/mediachdl"),
         )
 
     def log(self, message):
@@ -271,12 +275,12 @@ class MediaDownloaderApp:
             return
 
         if not (
-            url.startswith("http")
-            and ("2ch.hk" in url or "arhivach.hk" in url)
+            url.startswith("https")
+            and ("2ch.org" in url or "arhivach.vc" in url)
         ):
             messagebox.showwarning(
                 "Предупреждение",
-                "Неверный URL. Убедитесь, что ссылка относится к 2ch.hk или arhivach.hk",
+                "Неверный URL. Убедитесь, что ссылка относится к 2ch.org или arhivach.vc",
             )
             return
 
@@ -341,12 +345,12 @@ class MediaDownloaderApp:
             return
 
         if not (
-            url.startswith("http")
-            and ("2ch.hk" in url or "arhivach.hk" in url)
+            url.startswith("https")
+            and ("2ch.org" in url or "arhivach.vc" in url)
         ):
             messagebox.showwarning(
                 "Предупреждение",
-                "Неверный URL. Убедитесь, что ссылка относится к 2ch.hk или arhivach.hk",
+                "Неверный URL. Убедитесь, что ссылка относится к 2ch.org или arhivach.vc",
             )
             return
 
@@ -497,7 +501,7 @@ class MediaDownloaderApp:
             )
 
             headers = {"User-Agent": random.choice(USER_AGENTS)}
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, headers=headers, verify=False)
             if response.status_code != 200:
                 self.root.after(
                     0,
@@ -535,9 +539,7 @@ class MediaDownloaderApp:
 
             return media_links
         except Exception as e:
-            self.root.after(
-                0, lambda: self.log(f"Ошибка при получении ссылок: {e}")
-            )
+            self.root.after(0, lambda err=e: self.log(f"Ошибка при получении ссылок: {err}"))
             return []
 
     def _download_files(self, links, thread_folder, subfolder, skip_existing, max_workers):
@@ -636,7 +638,7 @@ class MediaDownloaderApp:
 
             try:
                 headers = {"User-Agent": random.choice(USER_AGENTS)}
-                response = requests.get(link, stream=True, timeout=10, headers=headers)
+                response = requests.get(link, stream=True, timeout=10, headers=headers, verify=False)
                 if response.status_code == 200:
                     with open(file_path, "wb") as file:
                         for chunk in response.iter_content(1024):

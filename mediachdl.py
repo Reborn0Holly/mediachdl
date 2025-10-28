@@ -34,7 +34,7 @@ USER_AGENTS = [
 class MediaDownloaderApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Загрузчик медиафайлов 2ch/arhivach")
+        self.root.title("Загрузчик медиафайлов 2ch / arhivach / 4chan")
         self.root.geometry("860x630")
         
         self.current_user_agent = None
@@ -68,7 +68,7 @@ class MediaDownloaderApp:
         url_frame.pack(fill=tk.X, pady=5)
 
         ttk.Label(
-            url_frame, text="Введите ссылку на тред 2ch.org или arhivach.vc:"
+            url_frame, text="Введите ссылку на тред 2ch.org, arhivach.vc или 4chan.org:"
         ).pack(anchor="w")
 
         url_entry_frame = ttk.Frame(url_frame)
@@ -275,8 +275,13 @@ class MediaDownloaderApp:
             return
 
         if not (
-            url.startswith("https")
-            and ("2ch.org" in url or "arhivach.vc" in url)
+            url.startswith("https://")
+            and (
+                "2ch.org" in url or 
+                "arhivach.vc" in url or 
+                "4chan.org" in url or 
+                "boards.4chan.org" in url
+            )
         ):
             messagebox.showwarning(
                 "Предупреждение",
@@ -345,8 +350,13 @@ class MediaDownloaderApp:
             return
 
         if not (
-            url.startswith("https")
-            and ("2ch.org" in url or "arhivach.vc" in url)
+            url.startswith("https://")
+            and (
+                "2ch.org" in url or 
+                "arhivach.vc" in url or 
+                "4chan.org" in url or 
+                "boards.4chan.org" in url
+            )
         ):
             messagebox.showwarning(
                 "Предупреждение",
@@ -374,9 +384,13 @@ class MediaDownloaderApp:
     def _get_thread_id(self, url):
 
         import re
-        pattern = r"(?:res/|thread/)(\d+)"
-        match = re.search(pattern, url)
-        return match.group(1) if match else "unknown"
+        match = re.search(r"(?:res/|thread/)(\d+)", url)
+        if match:
+            return match.group(1)
+        match = re.search(r"/thread/(\d+)", url)
+        if match:
+            return match.group(1)
+        return "unknown"
 
     def _download_thread(self):
         try:
@@ -393,6 +407,8 @@ class MediaDownloaderApp:
             video_exts = ["mp4", "webm"]
 
             thread_id = self._get_thread_id(url)
+            source = "4chan" if "4chan.org" in url else ("arhivach" if "arhivach.vc" in url else "2ch")
+            self.log(f"Источник: {source}, Тред ID: {thread_id}")
             thread_folder = os.path.join(thread_folder, thread_id)
             if not os.path.exists(thread_folder):
                 os.makedirs(thread_folder)
@@ -512,32 +528,36 @@ class MediaDownloaderApp:
                 return []
 
             soup = BeautifulSoup(response.text, "html.parser")
-            media_links = []
-
-            for tag in soup.find_all(["a"]):
-                href = None
-                if tag.name == "a" and tag.has_attr("href"):
+            media_links = set()
+            base_url = "https://i.4cdn.org" if "4chan.org" in url else None
+            if "4chan.org" in url:
+                for thumb in soup.find_all("a", class_="fileThumb"):
+                    href = thumb.get("href")
+                    if href and any(href.endswith(f".{ext}") for ext in media_types):
+                        if href.startswith("//"):
+                            full_url = "https:" + href
+                        elif href.startswith("/"):
+                            full_url = "https://boards.4chan.org" + href
+                        else:
+                            full_url = href
+                        media_links.add(full_url)
+            else:
+                for tag in soup.find_all("a", href=True):
                     href = tag["href"]
+                    if any(href.endswith(f".{ext}") for ext in media_types):
+                        full_url = urljoin(url, href)
+                        media_links.add(full_url)
 
-                if href and any(
-                    href.endswith(f".{ext}") for ext in media_types
-                ):
-                    full_url = urljoin(url, href)
-                    if full_url not in media_links:
-                        media_links.append(full_url)
-
-            for file_elem in soup.find_all(class_="file"):
-                for a_tag in file_elem.find_all("a"):
-                    if a_tag.has_attr("href"):
+            # Дополнительно: класс .file (на случай, если не поймали)
+                for file_elem in soup.find_all(class_="file"):
+                    for a_tag in file_elem.find_all("a", href=True):
                         href = a_tag["href"]
-                        if any(
-                            href.endswith(f".{ext}") for ext in media_types
-                        ):
-                            full_url = urljoin(url, href)
-                            if full_url not in media_links:
-                                media_links.append(full_url)
+                        if any(href.endswith(f".{ext}") for ext in media_types):
+                           full_url = urljoin(url, href)
+                           media_links.add(full_url)
 
-            return media_links
+            return list(media_links)
+
         except Exception as e:
             self.root.after(0, lambda err=e: self.log(f"Ошибка при получении ссылок: {err}"))
             return []

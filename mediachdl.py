@@ -1,4 +1,3 @@
-
 import re
 import os
 import requests
@@ -13,6 +12,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
+from tkinter import scrolledtext
 import urllib3
 import warnings
 
@@ -64,7 +64,7 @@ class MediaDownloaderApp:
         self.stop_requested = False
 
     def _create_url_section(self, parent):
-        url_frame = ttk.LabelFrame(parent, text="URL", padding=5)
+        url_frame = ttk.Labelframe(parent, text="URL", padding=5)
         url_frame.pack(fill=tk.X, pady=5)
 
         ttk.Label(
@@ -92,7 +92,7 @@ class MediaDownloaderApp:
             pass
 
     def _create_options_section(self, parent):
-        options_frame = ttk.LabelFrame(parent, text="Настройки", padding=5)
+        options_frame = ttk.Labelframe(parent, text="Настройки", padding=5)
         options_frame.pack(fill=tk.X, pady=5)
 
         media_frame = ttk.Frame(options_frame)
@@ -183,7 +183,7 @@ class MediaDownloaderApp:
         ).pack(side=tk.LEFT, padx=5)
 
     def _create_progress_section(self, parent):
-        progress_frame = ttk.LabelFrame(
+        progress_frame = ttk.Labelframe(
             parent, text="Прогресс загрузки", padding=5
         )
         progress_frame.pack(fill=tk.X, pady=5)
@@ -201,10 +201,10 @@ class MediaDownloaderApp:
         self.progress_label.pack(anchor="w")
 
     def _create_log_section(self, parent):
-        log_frame = ttk.LabelFrame(parent, text="Лог загрузки", padding=5)
+        log_frame = ttk.Labelframe(parent, text="Лог загрузки", padding=5)
         log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
 
-        self.log_text = ttk.ScrolledText(
+        self.log_text = scrolledtext.ScrolledText(
             log_frame, wrap=tk.WORD, height=10
         )
         self.log_text.pack(fill=tk.BOTH, expand=True)
@@ -216,8 +216,7 @@ class MediaDownloaderApp:
 
         ttk.Label(status_bar, textvariable=self.status_var).pack(side=tk.LEFT)
 
-        ttk.Label(status_bar, text="v0.0.1 | ").pack(side=tk.RIGHT)
-        # Use standard Label with blue foreground to mimic a link
+        ttk.Label(status_bar, text="v0.0.2 | ").pack(side=tk.RIGHT)
         website_link = ttk.Label(
             status_bar,
             text="GitHub",
@@ -548,7 +547,6 @@ class MediaDownloaderApp:
                         full_url = urljoin(url, href)
                         media_links.add(full_url)
 
-            # Дополнительно: класс .file (на случай, если не поймали)
                 for file_elem in soup.find_all(class_="file"):
                     for a_tag in file_elem.find_all("a", href=True):
                         href = a_tag["href"]

@@ -8,11 +8,11 @@ def setup_virtualenv():
         print("Этот скрипт предназначен только для Windows!")
         sys.exit()
 
-    venv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "venv")
+    venv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv")
     
     if not os.path.exists(venv_path):
         print("Создание виртуальной среды...")
-        subprocess.call([sys.executable, "-m", "venv", "venv"], shell=True)
+        subprocess.call([sys.executable, "-m", "venv", ".venv"], shell=True)
     else:
         print("Виртуальная среда уже существует!")
 
@@ -30,7 +30,7 @@ def setup_virtualenv():
     required_packages = [
         "requests",
         "beautifulsoup4",
-        "ttkbootstrap"
+        "customtkinter"
     ]
 
     print("Установка зависимостей в виртуальной среде...")

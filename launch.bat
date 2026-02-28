@@ -4,7 +4,7 @@ title mediachdl
 echo Запуск программы mediachdl.py...
 
 
-if not exist "venv\Scripts\activate.bat" (
+if not exist ".venv\Scripts\activate.bat" (
     echo Виртуальная среда не найдена. Запускаем настройку...
     python setup.py
     if errorlevel 1 (
@@ -15,10 +15,10 @@ if not exist "venv\Scripts\activate.bat" (
 )
 
 
-call venv\Scripts\activate.bat
+call .venv\Scripts\activate.bat
 
 
-python mediachdl.py
+python mediachdl_gui.py
 
 
 deactivate

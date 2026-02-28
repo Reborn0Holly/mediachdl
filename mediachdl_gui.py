@@ -1,687 +1,470 @@
-import re
+"""
+mediachdl_gui.py — CustomTkinter GUI for Media Downloader
+Requires: pip install customtkinter requests beautifulsoup4
+"""
+
 import os
-import requests
 import time
-import concurrent.futures
 import threading
 import webbrowser
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin
-import random
-import tkinter as tk
+import customtkinter as ctk
 from tkinter import filedialog, messagebox
-import ttkbootstrap as ttk
-from ttkbootstrap.constants import *
-from tkinter import scrolledtext
-import urllib3
-import warnings
 
-warnings.filterwarnings("ignore", category=urllib3.exceptions.InsecureRequestWarning)
+from language_en import LANG
+from mediachdl_core import MediaDownloaderCore, is_valid_url
 
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0",
-    "Mozilla/5.0 (Windows NT 11.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Edg/128.0.2739.42",
-    "Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.2792.52",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 OPR/114.0.0.0",
-    "Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 OPR/115.0.0.0",
-    "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+# ── Theme ─────────────────────────────────────────────────────────────────────
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
+
+ACCENT   = "#2D7DD2"
+BG_DARK  = "#0F1117"
+BG_MID   = "#181C27"
+BG_CARD  = "#1E2338"
+TEXT     = "#E8EAF0"
+TEXT_DIM = "#6B7280"
+SUCCESS  = "#22C55E"
+ERROR    = "#EF4444"
+WARN     = "#F59E0B"
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+MEDIA_TYPES = [
+    ("type_all_media",   "all_media"),
+    ("type_all_images",  "all_images"),
+    ("type_all_videos",  "all_videos"),
+    ("type_png",         "png"),
+    ("type_jpg",         "jpg"),
+    ("type_jpeg",        "jpeg"),
+    ("type_webp",        "webp"),
+    ("type_webm",        "webm"),
+    ("type_mp4",         "mp4"),
 ]
 
-class MediaDownloaderApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Загрузчик медиафайлов 2ch / arhivach / 4chan")
-        self.root.geometry("860x630")
-        
-        self.current_user_agent = None
 
-        self.style = ttk.Style("cosmo")
+def t(key: str, **kwargs) -> str:
+    s = LANG.get(key, key)
+    return s.format(**kwargs) if kwargs else s
 
-        self.url_var = tk.StringVar()
-        self.folder_var = tk.StringVar(
-            value=os.path.join(os.path.dirname(os.path.abspath(__file__)), "Downloads")
-        )
-        
-        self.skip_existing_var = tk.BooleanVar(value=False)
-        self.threads_var = tk.IntVar(value=3)
-        self.status_var = tk.StringVar(value="Готов к работе")
-        self.media_type_var = tk.StringVar(value="all_videos")
 
-        main_frame = ttk.Frame(root, padding=10)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+class StatCard(ctk.CTkFrame):
+    def __init__(self, master, label: str, color: str = TEXT, **kwargs):
+        super().__init__(master, fg_color=BG_CARD, corner_radius=10, **kwargs)
+        self.value_lbl = ctk.CTkLabel(self, text="0",
+                                       font=("Consolas", 24, "bold"),
+                                       text_color=color)
+        self.value_lbl.pack(pady=(10, 2))
+        ctk.CTkLabel(self, text=label, text_color=TEXT_DIM,
+                     font=("Consolas", 10)).pack(pady=(0, 10))
 
-        self._create_url_section(main_frame)
-        self._create_options_section(main_frame)
-        self._create_progress_section(main_frame)
-        self._create_log_section(main_frame)
-        self._create_status_bar(root)
+    def set(self, val: int):
+        self.value_lbl.configure(text=str(val))
 
-        self.is_downloading = False
-        self.stop_requested = False
 
-    def _create_url_section(self, parent):
-        url_frame = ttk.Labelframe(parent, text="URL", padding=5)
-        url_frame.pack(fill=tk.X, pady=5)
+class MediaDownloaderApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
 
-        ttk.Label(
-            url_frame, text="Введите ссылку на тред 2ch.org, arhivach.vc или 4chan.org:"
-        ).pack(anchor="w")
+        self.title(t('title'))
+        self.geometry("1200x900")
+        self.minsize(860, 620)
+        self.configure(fg_color=BG_DARK)
 
-        url_entry_frame = ttk.Frame(url_frame)
-        url_entry_frame.pack(fill=tk.X, pady=5)
+        self._core           = MediaDownloaderCore()
+        self._is_downloading = False
+        self._log_queue: list[str] = []
+        self._stats          = {"found": 0, "downloaded": 0, "errors": 0, "skipped": 0}
 
-        ttk.Entry(url_entry_frame, textvariable=self.url_var).pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5)
-        )
-        ttk.Button(
-            url_entry_frame, text="URL из буфера", command=self.paste_url
-        ).pack(side=tk.LEFT, padx=5)
-        ttk.Button(
-            url_entry_frame, text="Проверить", command=self.check_url
-        ).pack(side=tk.LEFT, padx=5)
+        self._build_ui()
+        self._poll_log()
 
-    def paste_url(self):
+    # ── UI ────────────────────────────────────────────────────────────────────
+
+    def _build_ui(self):
+        # ── Header ──
+        header = ctk.CTkFrame(self, fg_color=BG_MID, corner_radius=0, height=56)
+        header.pack(fill="x", side="top")
+        header.pack_propagate(False)
+        ctk.CTkLabel(header, text=t('header_title'),
+                     font=("Consolas", 18, "bold"), text_color=ACCENT).pack(
+            side="left", padx=24, pady=14)
+        ctk.CTkLabel(header, text=t('header_subtitle'),
+                     font=("Consolas", 11), text_color=TEXT_DIM).pack(
+            side="left", pady=14)
+
+        # version + github link
+        gh_lbl = ctk.CTkLabel(header, text=f"{t('version')}  |  {t('github_link')}",
+                               font=("Consolas", 11), text_color=ACCENT, cursor="hand2")
+        gh_lbl.pack(side="right", padx=20)
+        gh_lbl.bind("<Button-1>", lambda _: webbrowser.open(t('github_url')))
+
+        # ── Body ──
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=20, pady=14)
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(4, weight=1)
+
+        # ── URL card ──
+        url_card = ctk.CTkFrame(body, fg_color=BG_CARD, corner_radius=12)
+        url_card.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        url_card.columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(url_card, text=t('url_section'),
+                     font=("Consolas", 10, "bold"), text_color=ACCENT).grid(
+            row=0, column=0, columnspan=3, sticky="w", padx=16, pady=(12, 6))
+        ctk.CTkLabel(url_card, text=t('url_hint'),
+                     font=("Consolas", 11), text_color=TEXT_DIM).grid(
+            row=1, column=0, columnspan=3, sticky="w", padx=16, pady=(0, 6))
+
+        self.url_entry = ctk.CTkEntry(url_card, placeholder_text=t('url_placeholder'),
+                                       fg_color=BG_DARK, border_color="#2A2F45",
+                                       text_color=TEXT, font=("Consolas", 12))
+        self.url_entry.grid(row=2, column=1, columnspan=1, sticky="ew",
+                                padx=(4, 16), pady=(0, 12))
+
+        ctk.CTkButton(url_card, text=t('btn_paste_url'), width=130, height=30,
+                      fg_color=ACCENT, hover_color="#1A5FA8",
+                      font=("Consolas", 11), command=self._paste_url).grid(
+            row=1, column=2, padx=(4, 16), pady=(0, 12))
+
+        ctk.CTkButton(url_card, text=t('btn_check_url'), width=100, height=30,
+                      fg_color=ACCENT, hover_color="#1A5FA8",
+                      font=("Consolas", 11), command=self._check_url).grid(
+            row=2, column=2, padx=(4, 16), pady=(0, 12))
+
+        # ── Options card ──
+        opt_card = ctk.CTkFrame(body, fg_color=BG_CARD, corner_radius=12)
+        opt_card.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        opt_card.columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(opt_card, text=t('options_section'),
+                     font=("Consolas", 10, "bold"), text_color=ACCENT).grid(
+            row=0, column=0, columnspan=4, sticky="w", padx=16, pady=(12, 8))
+
+        # Media type radios
+        ctk.CTkLabel(opt_card, text=t('label_media_type'), width=130, anchor="w",
+                     text_color=TEXT_DIM, font=("Consolas", 12)).grid(
+            row=1, column=0, padx=(16, 8), pady=4, sticky="w")
+
+        radio_wrap = ctk.CTkFrame(opt_card, fg_color="transparent")
+        radio_wrap.grid(row=1, column=1, columnspan=3, sticky="w", pady=4)
+
+        self.media_type_var = ctk.StringVar(value="all_videos")
+        for lang_key, value in MEDIA_TYPES:
+            ctk.CTkRadioButton(radio_wrap, text=t(lang_key), value=value,
+                               variable=self.media_type_var,
+                               text_color=TEXT, font=("Consolas", 11),
+                               fg_color=ACCENT).pack(side="left", padx=6)
+
+        # Folder
+        ctk.CTkLabel(opt_card, text=t('label_download_folder'), width=130, anchor="w",
+                     text_color=TEXT_DIM, font=("Consolas", 12)).grid(
+            row=2, column=0, padx=(16, 8), pady=4, sticky="w")
+
+        self.folder_entry = ctk.CTkEntry(opt_card, fg_color=BG_DARK,
+                                          border_color="#2A2F45",
+                                          text_color=TEXT, font=("Consolas", 12))
+        default_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Downloads")
+        self.folder_entry.insert(0, default_folder)
+        self.folder_entry.grid(row=2, column=1, columnspan=2, sticky="ew",
+                                padx=(0, 6), pady=4)
+
+        ctk.CTkButton(opt_card, text=t('btn_browse'), width=36, height=28,
+                      fg_color=BG_CARD, hover_color=ACCENT,
+                      command=self._browse_folder).grid(
+            row=2, column=3, padx=(0, 16), pady=4)
+
+        # Advanced row
+        adv_row = ctk.CTkFrame(opt_card, fg_color="transparent")
+        adv_row.grid(row=3, column=0, columnspan=4, sticky="w",
+                     padx=16, pady=(4, 12))
+
+        self.skip_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(adv_row, text=t('label_skip_existing'),
+                        variable=self.skip_var,
+                        text_color=TEXT, font=("Consolas", 11),
+                        fg_color=ACCENT, hover_color="#1A5FA8").pack(
+            side="left", padx=(0, 24))
+
+        self.sequential_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(adv_row, text=t('label_sequential'),
+                        variable=self.sequential_var,
+                        text_color=TEXT, font=("Consolas", 11),
+                        fg_color=ACCENT, hover_color="#1A5FA8").pack(
+            side="left", padx=(0, 24))
+
+        ctk.CTkLabel(adv_row, text=t('label_threads'),
+                     text_color=TEXT_DIM, font=("Consolas", 11)).pack(side="left")
+
+        self.threads_var = ctk.IntVar(value=3)
+        ctk.CTkEntry(adv_row, textvariable=self.threads_var, width=50,
+                     fg_color=BG_DARK, border_color="#2A2F45",
+                     text_color=TEXT, font=("Consolas", 12)).pack(
+            side="left", padx=(8, 0))
+
+        # ── Action buttons ──
+        btn_row = ctk.CTkFrame(body, fg_color="transparent")
+        btn_row.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+
+        self.start_btn = ctk.CTkButton(
+            btn_row, text=t('btn_start'),
+            font=("Consolas", 13, "bold"), height=40,
+            fg_color=ACCENT, hover_color="#1A5FA8",
+            command=self._start_download)
+        self.start_btn.pack(side="left", padx=(0, 8))
+
+        self.stop_btn = ctk.CTkButton(
+            btn_row, text=t('btn_stop'),
+            font=("Consolas", 13), height=40,
+            fg_color="#3B3F52", hover_color=ERROR,
+            state="disabled", command=self._stop_download)
+        self.stop_btn.pack(side="left", padx=(0, 20))
+
+        ctk.CTkButton(
+            btn_row, text=t('btn_open_folder'),
+            font=("Consolas", 12), height=40,
+            fg_color="transparent", border_width=1,
+            border_color="#2A2F45", hover_color=BG_CARD,
+            text_color=TEXT_DIM, command=self._open_folder).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(
+            btn_row, text=t('btn_save_log'),
+            font=("Consolas", 12), height=40,
+            fg_color="transparent", border_width=1,
+            border_color="#2A2F45", hover_color=BG_CARD,
+            text_color=TEXT_DIM, command=self._save_log).pack(side="left")
+
+        # ── Progress ──
+        self.progress_var = ctk.DoubleVar(value=0)
+        self.progress_bar = ctk.CTkProgressBar(body, variable=self.progress_var,
+                                                height=6, progress_color=ACCENT,
+                                                fg_color=BG_CARD)
+        self.progress_bar.set(0)
+        self.progress_bar.grid(row=3, column=0, sticky="ew", pady=(0, 4))
+
+        self.status_lbl = ctk.CTkLabel(body, text=t('status_ready'),
+                                        font=("Consolas", 11), text_color=TEXT_DIM,
+                                        anchor="w")
+        self.status_lbl.grid(row=3, column=0, sticky="sw")
+
+        # ── Bottom: log + stats ──
+        bottom = ctk.CTkFrame(body, fg_color="transparent")
+        bottom.grid(row=4, column=0, sticky="nsew", pady=(8, 0))
+        bottom.columnconfigure(0, weight=1)
+        bottom.rowconfigure(0, weight=1)
+
+        # Log
+        log_wrap = ctk.CTkFrame(bottom, fg_color=BG_CARD, corner_radius=12)
+        log_wrap.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        log_wrap.columnconfigure(0, weight=1)
+        log_wrap.rowconfigure(1, weight=1)
+        ctk.CTkLabel(log_wrap, text=t('log_section'),
+                     font=("Consolas", 10, "bold"), text_color=ACCENT).grid(
+            row=0, column=0, sticky="w", padx=12, pady=(10, 4))
+
+        self.log_box = ctk.CTkTextbox(
+            log_wrap, fg_color=BG_DARK, text_color=TEXT,
+            font=("Consolas", 11), corner_radius=8,
+            border_width=1, border_color="#1A1E2E",
+            wrap="word", state="disabled")
+        self.log_box.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+
+        # Stats column
+        stats_col = ctk.CTkFrame(bottom, fg_color="transparent")
+        stats_col.grid(row=0, column=1, sticky="ns")
+
+        ctk.CTkLabel(stats_col, text=t('stats_section'),
+                     font=("Consolas", 10, "bold"), text_color=ACCENT).pack(
+            anchor="w", pady=(0, 8))
+
+        self.card_found      = StatCard(stats_col, t('card_found'),      color=TEXT)
+        self.card_downloaded = StatCard(stats_col, t('card_downloaded'), color=SUCCESS)
+        self.card_errors     = StatCard(stats_col, t('card_errors'),     color=ERROR)
+        self.card_skipped    = StatCard(stats_col, t('card_skipped'),    color=WARN)
+
+        for c in [self.card_found, self.card_downloaded, self.card_errors, self.card_skipped]:
+            c.pack(fill="x", pady=4)
+
+        # Progress label below stats
+        self.progress_lbl = ctk.CTkLabel(stats_col, text=t('progress_label_init'),
+                                          font=("Consolas", 11), text_color=TEXT_DIM)
+        self.progress_lbl.pack(anchor="w", pady=(12, 0))
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _set_status(self, msg: str, color: str = TEXT_DIM):
+        self.status_lbl.configure(text=msg, text_color=color)
+
+    def _append_log(self, text: str):
+        self.log_box.configure(state="normal")
+        ts = time.strftime('%H:%M:%S')
+        self.log_box.insert("end", f"[{ts}] {text}\n")
+        self.log_box.configure(state="disabled")
+        self.log_box.see("end")
+
+    def _poll_log(self):
+        for msg in self._log_queue:
+            self._append_log(msg)
+        self._log_queue.clear()
+        self.after(80, self._poll_log)
+
+    def _log(self, msg: str):
+        self._log_queue.append(msg)
+
+    def _update_progress(self, done: int, total: int):
+        pct = (done / total * 100) if total else 0
+        self.progress_var.set(pct / 100)
+        self.progress_lbl.configure(text=t('progress_label', done=done, total=total))
+
+        # Update stat cards
+        if "Saved" in t('file_saved', filename='') or done > 0:
+            self.card_downloaded.set(done)
+
+    def _reset_stats(self):
+        for card in [self.card_found, self.card_downloaded,
+                     self.card_errors, self.card_skipped]:
+            card.set(0)
+        self.progress_var.set(0)
+        self.progress_lbl.configure(text=t('progress_label_init'))
+
+    # ── Actions ───────────────────────────────────────────────────────────────
+
+    def _paste_url(self):
         try:
-            clipboard_text = self.root.clipboard_get()
-            self.url_var.set(clipboard_text)
-        except tk.TclError:
+            self.url_entry.delete(0, "end")
+            self.url_entry.insert(0, self.clipboard_get())
+        except Exception:
             pass
 
-    def _create_options_section(self, parent):
-        options_frame = ttk.Labelframe(parent, text="Настройки", padding=5)
-        options_frame.pack(fill=tk.X, pady=5)
+    def _browse_folder(self):
+        d = filedialog.askdirectory(initialdir=self.folder_entry.get())
+        if d:
+            self.folder_entry.delete(0, "end")
+            self.folder_entry.insert(0, d)
 
-        media_frame = ttk.Frame(options_frame)
-        media_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(media_frame, text="Тип медиафайлов:").pack(
-            side=tk.LEFT, padx=(0, 10)
-        )
-
-        media_types = [
-            ("Все медиафайлы", "all_media"),
-            ("Все изображения", "all_images"),
-            ("Все видео", "all_videos"),
-            ("PNG", "png"),
-            ("JPG", "jpg"),
-            ("JPEG", "jpeg"),
-            ("WEBP", "webp"),
-            ("WEBM", "webm"),
-            ("MP4", "mp4"),
-        ]
-
-        for i, (text, value) in enumerate(media_types):
-            ttk.Radiobutton(
-                media_frame,
-                text=text,
-                value=value,
-                variable=self.media_type_var,
-            ).pack(side=tk.LEFT, padx=5)
-
-        folder_frame = ttk.Frame(options_frame)
-        folder_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(folder_frame, text="Папка загрузок:").pack(
-            side=tk.LEFT, padx=(0, 10)
-        )
-        ttk.Entry(folder_frame, textvariable=self.folder_var).pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5)
-        )
-        ttk.Button(
-            folder_frame, text="Обзор", command=self.browse_folder
-        ).pack(side=tk.LEFT)
-
-        advanced_frame = ttk.Frame(options_frame)
-        advanced_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Checkbutton(
-            advanced_frame,
-            text="Пропускать существующие файлы",
-            variable=self.skip_existing_var,
-        ).pack(side=tk.LEFT, padx=(0, 20))
-
-        ttk.Label(advanced_frame, text="Количество потоков (лучше больше 3 не ставить):").pack(
-            side=tk.LEFT
-        )
-        ttk.Spinbox(
-            advanced_frame,
-            from_=1,
-            to=20,
-            width=5,
-            textvariable=self.threads_var,
-        ).pack(side=tk.LEFT, padx=5)
-
-        actions_frame = ttk.Frame(options_frame)
-        actions_frame.pack(fill=tk.X, pady=10)
-
-        self.download_button = ttk.Button(
-            actions_frame,
-            text="Начать загрузку",
-            style="primary.TButton",
-            command=self.start_download,
-        )
-        self.download_button.pack(side=tk.LEFT, padx=5)
-
-        self.stop_button = ttk.Button(
-            actions_frame,
-            text="Остановить",
-            state=tk.DISABLED,
-            command=self.stop_download,
-        )
-        self.stop_button.pack(side=tk.LEFT, padx=5)
-
-        ttk.Button(
-            actions_frame, text="Открыть папку", command=self.open_folder
-        ).pack(side=tk.LEFT, padx=5)
-
-        ttk.Button(
-            actions_frame, text="Сохранить лог", command=self.save_log
-        ).pack(side=tk.LEFT, padx=5)
-
-    def _create_progress_section(self, parent):
-        progress_frame = ttk.Labelframe(
-            parent, text="Прогресс загрузки", padding=5
-        )
-        progress_frame.pack(fill=tk.X, pady=5)
-
-        self.progress_var = tk.DoubleVar()
-        self.progress_bar = ttk.Progressbar(
-            progress_frame,
-            variable=self.progress_var,
-            mode="determinate",
-            length=100,
-        )
-        self.progress_bar.pack(fill=tk.X, pady=5)
-
-        self.progress_label = ttk.Label(progress_frame, text="0/0 файлов")
-        self.progress_label.pack(anchor="w")
-
-    def _create_log_section(self, parent):
-        log_frame = ttk.Labelframe(parent, text="Лог загрузки", padding=5)
-        log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-
-        self.log_text = scrolledtext.ScrolledText(
-            log_frame, wrap=tk.WORD, height=10
-        )
-        self.log_text.pack(fill=tk.BOTH, expand=True)
-        self.log_text.config(state=tk.DISABLED)
-
-    def _create_status_bar(self, parent):
-        status_bar = ttk.Frame(parent, relief=tk.SUNKEN, padding=(5, 2))
-        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-
-        ttk.Label(status_bar, textvariable=self.status_var).pack(side=tk.LEFT)
-
-        ttk.Label(status_bar, text="v0.0.2 | ").pack(side=tk.RIGHT)
-        website_link = ttk.Label(
-            status_bar,
-            text="GitHub",
-            foreground="blue",
-            cursor="hand2"
-        )
-        website_link.pack(side=tk.RIGHT)
-        website_link.bind(
-            "<Button-1>",
-            lambda e: webbrowser.open("https://github.com/Reborn0Holly/mediachdl"),
-        )
-
-    def log(self, message):
-        self.log_text.config(state=tk.NORMAL)
-        self.log_text.insert(
-            tk.END, f"[{time.strftime('%H:%M:%S')}] {message}\n"
-        )
-        self.log_text.see(tk.END)
-        self.log_text.config(state=tk.DISABLED)
-
-    def browse_folder(self):
-        folder = filedialog.askdirectory(initialdir=self.folder_var.get())
-        if folder:
-            self.folder_var.set(folder)
-
-    def open_folder(self):
-        folder = self.folder_var.get()
-        if os.path.exists(folder):
-            if os.name == "nt":
-                os.startfile(folder)
-            elif os.name == "posix":
-                os.system(f'xdg-open "{folder}"')
+    def _open_folder(self):
+        folder = self.folder_entry.get()
+        if not os.path.exists(folder):
+            messagebox.showwarning(t('mb_warn_title'), t('mb_warn_no_folder'))
+            return
+        if os.name == "nt":
+            os.startfile(folder)
         else:
-            messagebox.showwarning(
-                "Предупреждение", "Указанная папка не существует"
-            )
+            os.system(f'xdg-open "{folder}"')
 
-    def save_log(self):
-        file_path = filedialog.asksaveasfilename(
+    def _save_log(self):
+        ts   = time.strftime('%Y%m%d_%H%M%S')
+        path = filedialog.asksaveasfilename(
             defaultextension=".txt",
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
-            initialdir=self.folder_var.get(),
-            initialfile=f"download_log_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+            initialdir=self.folder_entry.get(),
+            initialfile=t('save_log_filename', timestamp=ts),
         )
-        if file_path:
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(self.log_text.get(1.0, tk.END))
-            messagebox.showinfo("Информация", f"Лог сохранен в {file_path}")
+        if path:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.log_box.get("1.0", "end"))
+            messagebox.showinfo(t('mb_info_title'), t('mb_info_log_saved', path=path))
 
-    def check_url(self):
-        url = self.url_var.get().strip()
-
+    def _validate_url(self) -> str | None:
+        url = self.url_entry.get().strip()
         if not url:
-            messagebox.showwarning("Предупреждение", "Введите URL")
+            messagebox.showwarning(t('mb_warn_title'), t('mb_warn_no_url'))
+            return None
+        if not is_valid_url(url):
+            messagebox.showwarning(t('mb_warn_title'), t('mb_warn_invalid_url'))
+            return None
+        return url
+
+    def _check_url(self):
+        url = self._validate_url()
+        if not url:
             return
+        self._set_status(t('status_checking'), ACCENT)
 
-        if not (
-            url.startswith("https://")
-            and (
-                "2ch.org" in url or 
-                "arhivach.vc" in url or 
-                "4chan.org" in url or 
-                "boards.4chan.org" in url
-            )
-        ):
-            messagebox.showwarning(
-                "Предупреждение",
-                "Неверный URL. Убедитесь, что ссылка относится к 2ch.org или arhivach.vc",
-            )
-            return
-
-        self.status_var.set("Проверка URL...")
-        self.root.update()
-
-        threading.Thread(
-            target=self._check_url_thread, args=(url,), daemon=True
-        ).start()
-
-    def _check_url_thread(self, url):
-        try:
-            image_exts = ["png", "jpg", "jpeg", "webp"]
-            video_exts = ["mp4", "webm"]
-
-            image_links = self.get_media_links(url, image_exts)
-            video_links = self.get_media_links(url, video_exts)
-
-            self.root.after(
-                0,
-                lambda: self._update_after_check(
-                    url, image_links, video_links
-                ),
+        def _run():
+            self._core.check_url(
+                url,
+                log_cb=self._log,
+                done_cb=lambda imgs, vids: self.after(0, self._on_check_done, imgs, vids),
+                error_cb=lambda msg: self.after(0, self._log, msg),
             )
 
-        except Exception as e:
-            self.root.after(
-                0, lambda: self.log(f"Ошибка при проверке URL: {e}")
-            )
-            self.root.after(
-                0, lambda: self.status_var.set("Ошибка при проверке URL")
-            )
+        threading.Thread(target=_run, daemon=True).start()
 
-    def _update_after_check(self, url, image_links, video_links):
-        total_images = len(image_links)
-        total_videos = len(video_links)
-
-        self.log(f"Проверка URL: {url}")
-        self.log(f"Найдено изображений: {total_images}")
-        self.log(f"Найдено видео: {total_videos}")
-
-        if total_images == 0 and total_videos == 0:
-            messagebox.showinfo(
-                "Информация",
-                "Медиафайлы не найдены. Проверьте URL или выберите другой тред.",
-            )
-            self.status_var.set("Медиафайлы не найдены")
+    def _on_check_done(self, images: int, videos: int):
+        if images == 0 and videos == 0:
+            messagebox.showinfo(t('mb_info_title'), t('mb_info_check_none'))
+            self._set_status(t('mb_info_check_none'), WARN)
         else:
-            messagebox.showinfo(
-                "Информация",
-                f"Найдено {total_images} изображений и {total_videos} видео.",
-            )
-            self.status_var.set(
-                f"Готов к загрузке: {total_images} изображений, {total_videos} видео"
-            )
+            messagebox.showinfo(t('mb_info_title'),
+                                t('mb_info_check_found', images=images, videos=videos))
+            self._set_status(
+                t('mb_info_check_found', images=images, videos=videos), SUCCESS)
+        self.card_found.set(images + videos)
 
-    def start_download(self):
-        url = self.url_var.get().strip()
-
+    def _start_download(self):
+        url = self._validate_url()
         if not url:
-            messagebox.showwarning("Предупреждение", "Введите URL")
             return
 
-        if not (
-            url.startswith("https://")
-            and (
-                "2ch.org" in url or 
-                "arhivach.vc" in url or 
-                "4chan.org" in url or 
-                "boards.4chan.org" in url
-            )
-        ):
-            messagebox.showwarning(
-                "Предупреждение",
-                "Неверный URL. Убедитесь, что ссылка относится к 2ch.org или arhivach.vc",
-            )
-            return
-
-        folder = self.folder_var.get()
+        folder = self.folder_entry.get()
         if not os.path.exists(folder):
             try:
                 os.makedirs(folder)
             except Exception as e:
-                messagebox.showerror(
-                    "Ошибка", f"Не удалось создать папку: {e}"
-                )
+                messagebox.showerror(t('mb_error_title'),
+                                     t('mb_err_create_folder', error=e))
                 return
 
-        self.download_button.config(state=tk.DISABLED)
-        self.stop_button.config(state=tk.NORMAL)
-        self.is_downloading = True
-        self.stop_requested = False
+        self._reset_stats()
+        self.log_box.configure(state="normal")
+        self.log_box.delete("1.0", "end")
+        self.log_box.configure(state="disabled")
 
-        threading.Thread(target=self._download_thread, daemon=True).start()
+        self._is_downloading = True
+        self.start_btn.configure(state="disabled")
+        self.stop_btn.configure(state="normal")
+        self._set_status(t('status_fetching'), ACCENT)
 
-    def _get_thread_id(self, url):
-
-        import re
-        match = re.search(r"(?:res/|thread/)(\d+)", url)
-        if match:
-            return match.group(1)
-        match = re.search(r"/thread/(\d+)", url)
-        if match:
-            return match.group(1)
-        return "unknown"
-
-    def _download_thread(self):
-        try:
-            url = self.url_var.get().strip()
-            thread_folder = self.folder_var.get()
-            skip_existing = self.skip_existing_var.get()
-            max_workers = self.threads_var.get()
-            media_type = self.media_type_var.get()
-
-            self.current_user_agent = random.choice(USER_AGENTS)
-            self.log(f"Начало загрузки с User-Agent: {self.current_user_agent}")
-
-            image_exts = ["png", "jpg", "jpeg", "webp"]
-            video_exts = ["mp4", "webm"]
-
-            thread_id = self._get_thread_id(url)
-            source = "4chan" if "4chan.org" in url else ("arhivach" if "arhivach.vc" in url else "2ch")
-            self.log(f"Источник: {source}, Тред ID: {thread_id}")
-            thread_folder = os.path.join(thread_folder, thread_id)
-            if not os.path.exists(thread_folder):
-                os.makedirs(thread_folder)
-
-            if media_type == "all_images":
-                media_links = self.get_media_links(url, image_exts)
-                subfolder = "images"
-            elif media_type == "all_videos":
-                media_links = self.get_media_links(url, video_exts)
-                subfolder = "videos"
-            elif media_type == "all_media":
-                image_links = self.get_media_links(url, image_exts)
-                video_links = self.get_media_links(url, video_exts)
-
-                self.root.after(
-                    0,
-                    lambda: self.log(
-                        f"Найдено изображений: {len(image_links)}"
-                    ),
-                )
-                self.root.after(
-                    0, lambda: self.log(f"Найдено видео: {len(video_links)}")
-                )
-
-                if len(image_links) > 0:
-                    self._download_files(
-                        image_links,
-                        thread_folder,
-                        "images",
-                        skip_existing,
-                        max_workers,
-                    )
-                if len(video_links) > 0 and not self.stop_requested:
-                    self._download_files(
-                        video_links,
-                        thread_folder,
-                        "videos",
-                        skip_existing,
-                        max_workers,
-                    )
-
-                self.root.after(0, self._finalize_download)
-                return
-            else:
-                media_links = self.get_media_links(url, [media_type])
-                subfolder = media_type
-
-            self.root.after(
-                0,
-                lambda: self.log(
-                    f"Найдено файлов {subfolder}: {len(media_links)}"
-                ),
+        def _run():
+            self._core.download(
+                url            = url,
+                base_folder    = folder,
+                media_type     = self.media_type_var.get(),
+                skip_existing  = self.skip_var.get(),
+                max_workers    = self.threads_var.get(),
+                sequential     = self.sequential_var.get(),
+                log_cb         = self._log,
+                progress_cb    = lambda d, tot: self.after(0, self._update_progress, d, tot),
+                status_cb      = lambda msg: self.after(0, self._set_status, msg, ACCENT),
+                done_cb        = lambda: self.after(0, self._on_done),
             )
 
-            if len(media_links) > 0:
-                self._download_files(
-                    media_links,
-                    thread_folder,
-                    subfolder,
-                    skip_existing,
-                    max_workers,
-                )
-            else:
-                self.root.after(
-                    0,
-                    lambda: self.log(
-                        f"Файлы с указанным расширением не найдены"
-                    ),
-                )
+        threading.Thread(target=_run, daemon=True).start()
 
-            self.root.after(0, self._finalize_download)
+    def _stop_download(self):
+        self._core.request_stop()
+        self._set_status(t('status_stopping'), WARN)
+        self._log(t('log_stop_requested'))
 
-        except Exception as e:
-            self.root.after(0, lambda: self.log(f"Ошибка при загрузке: {e}"))
-            self.root.after(0, self._finalize_download)
+    def _on_done(self):
+        self._is_downloading = False
+        self.start_btn.configure(state="normal")
+        self.stop_btn.configure(state="disabled")
 
-    def _finalize_download(self):
-        self.is_downloading = False
-        self.download_button.config(state=tk.NORMAL)
-        self.stop_button.config(state=tk.DISABLED)
-
-        if self.stop_requested:
-            self.status_var.set("Загрузка остановлена пользователем")
-            self.log("Загрузка остановлена пользователем")
+        if self._core.stop_requested:
+            self._set_status(t('status_stopped'), WARN)
+            self._log(t('log_stopped'))
         else:
-            self.status_var.set("Загрузка завершена!")
-            self.log("Загрузка завершена!")
-            messagebox.showinfo("Информация", "Загрузка завершена!")
+            self._set_status(t('status_done'), SUCCESS)
+            self._log(t('log_done'))
+            messagebox.showinfo(t('mb_info_title'), t('mb_done'))
 
-    def stop_download(self):
-        if self.is_downloading:
-            self.stop_requested = True
-            self.status_var.set("Остановка загрузки...")
-            self.log("Запрошена остановка загрузки...")
-
-    def get_media_links(self, url, media_types):
-        try:
-            self.root.after(
-                0, lambda: self.status_var.set("Получение списка файлов...")
-            )
-            self.root.after(
-                0,
-                lambda: self.log(
-                    f"Получение ссылок для {', '.join(media_types)}..."
-                ),
-            )
-
-            headers = {"User-Agent": random.choice(USER_AGENTS)}
-            response = requests.get(url, headers=headers, verify=False)
-            if response.status_code != 200:
-                self.root.after(
-                    0,
-                    lambda: self.log(
-                        f"Ошибка при загрузке страницы: {response.status_code}"
-                    ),
-                )
-                return []
-
-            soup = BeautifulSoup(response.text, "html.parser")
-            media_links = set()
-            base_url = "https://i.4cdn.org" if "4chan.org" in url else None
-            if "4chan.org" in url:
-                for thumb in soup.find_all("a", class_="fileThumb"):
-                    href = thumb.get("href")
-                    if href and any(href.endswith(f".{ext}") for ext in media_types):
-                        if href.startswith("//"):
-                            full_url = "https:" + href
-                        elif href.startswith("/"):
-                            full_url = "https://boards.4chan.org" + href
-                        else:
-                            full_url = href
-                        media_links.add(full_url)
-            else:
-                for tag in soup.find_all("a", href=True):
-                    href = tag["href"]
-                    if any(href.endswith(f".{ext}") for ext in media_types):
-                        full_url = urljoin(url, href)
-                        media_links.add(full_url)
-
-                for file_elem in soup.find_all(class_="file"):
-                    for a_tag in file_elem.find_all("a", href=True):
-                        href = a_tag["href"]
-                        if any(href.endswith(f".{ext}") for ext in media_types):
-                           full_url = urljoin(url, href)
-                           media_links.add(full_url)
-
-            return list(media_links)
-
-        except Exception as e:
-            self.root.after(0, lambda err=e: self.log(f"Ошибка при получении ссылок: {err}"))
-            return []
-
-    def _download_files(self, links, thread_folder, subfolder, skip_existing, max_workers):
-        if not links:
-            return
-
-        folder = os.path.join(thread_folder, subfolder)
-        if not os.path.exists(folder):
-            os.makedirs(folder)
-
-        total_files = len(links)
-        completed_files = 0
-        self.root.after(0, lambda: self.progress_var.set(0))
-        self.root.after(
-            0,
-            lambda: self.progress_label.config(text=f"0/{total_files} файлов"),
-        )
-
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=max_workers
-        ) as executor:
-            future_to_link = {}
-
-            for link in links:
-                if self.stop_requested:
-                    break
-
-                future = executor.submit(
-                    self._download_single_file, link, folder, skip_existing
-                )
-                future_to_link[future] = link
-
-            for future in concurrent.futures.as_completed(future_to_link):
-                if self.stop_requested:
-                    executor.shutdown(wait=False)
-                    break
-
-                link = future_to_link[future]
-                try:
-                    result = future.result()
-                    self.root.after(
-                        0, lambda message=result: self.log(message)
-                    )
-
-                    completed_files += 1
-                    progress_percentage = (completed_files / total_files) * 100
-
-                    self.root.after(
-                        0,
-                        lambda p=progress_percentage: self.progress_var.set(p),
-                    )
-                    self.root.after(
-                        0,
-                        lambda c=completed_files, t=total_files: self.progress_label.config(
-                            text=f"{c}/{t} файлов"
-                        ),
-                    )
-                    self.root.after(
-                        0,
-                        lambda c=completed_files, t=total_files: self.status_var.set(
-                            f"Загружено {c} из {t} файлов"
-                        ),
-                    )
-
-                except Exception as e:
-                    self.root.after(
-                        0,
-                        lambda l=link, e=e: self.log(
-                            f"Ошибка при загрузке {l}: {e}"
-                        ),
-                    )
-
-    def _download_single_file(self, link, folder, skip_existing, max_retries=3):
-        filename = link.split("/")[-1]
-        file_path = os.path.join(folder, filename)
-
-        if skip_existing and os.path.exists(file_path):
-            return f"Файл {filename} уже существует, пропускаю"
-
-        if not skip_existing and os.path.exists(file_path):
-            base_name, ext = os.path.splitext(filename)
-            new_filename = f"{base_name}_copy{ext}"
-            file_path = os.path.join(folder, new_filename)
-            counter = 1
-
-            while os.path.exists(file_path):
-                new_filename = f"{base_name}_copy{counter}{ext}"
-                file_path = os.path.join(folder, new_filename)
-                counter += 1
-            filename = new_filename 
-
-        retries = 0
-        while retries < max_retries:
-            if self.stop_requested:
-                return f"Загрузка {filename} отменена"
-
-            try:
-                headers = {"User-Agent": random.choice(USER_AGENTS)}
-                response = requests.get(link, stream=True, timeout=10, headers=headers, verify=False)
-                if response.status_code == 200:
-                    with open(file_path, "wb") as file:
-                        for chunk in response.iter_content(1024):
-                            if self.stop_requested:
-                                file.close()
-                                if os.path.exists(file_path):
-                                    os.remove(file_path)
-                                return f"Загрузка {filename} отменена"
-
-                            if chunk:
-                                file.write(chunk)
-                    return f"Сохранено: {filename}"
-                else:
-                    retries += 1
-                    time.sleep(2)
-            except Exception as e:
-                retries += 1
-                time.sleep(2)
-
-        return f"Не удалось загрузить {filename} после {max_retries} попыток"
 
 def main():
-    root = ttk.Window(themename="cosmo")
-    app = MediaDownloaderApp(root)
-    root.mainloop()
+    app = MediaDownloaderApp()
+    app.mainloop()
+
 
 if __name__ == "__main__":
     main()
